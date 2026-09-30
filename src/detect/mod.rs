@@ -748,6 +748,18 @@ fn agent_name_from_known_package_path(path: &str) -> Option<String> {
             return Some(agent_label(Agent::Letta).to_string());
         }
     }
+    // Claude Code native install: .../claude/versions/<semver>
+    // On macOS the process name is the bare version number (the binary's
+    // filename), so basename matching never sees "claude". Match the
+    // parent directory structure instead.
+    for window in components.windows(3) {
+        if window[0] == "claude"
+            && window[1] == "versions"
+            && window[2].chars().next().is_some_and(|c| c.is_ascii_digit())
+        {
+            return Some(agent_label(Agent::Claude).to_string());
+        }
+    }
     None
 }
 
@@ -2178,5 +2190,53 @@ mod tests {
         let tpgid: i32 = fields[5].parse().expect("tpgid should be a number");
         // In CI/test environments without a terminal, tpgid is typically -1
         let _ = tpgid;
+    }
+
+    #[test]
+    fn identify_agent_in_job_detects_claude_native_install_version_binary() {
+        let job = crate::platform::ForegroundJob {
+            process_group_id: 7782,
+            processes: vec![foreground_process(
+                7782,
+                "2.1.281",
+                &["/Users/testuser/.local/share/claude/versions/2.1.281"],
+            )],
+        };
+
+        assert_eq!(
+            identify_agent_in_job(&job),
+            Some((Agent::Claude, "claude".to_string()))
+        );
+    }
+
+    #[test]
+    fn identify_agent_in_job_detects_claude_native_install_xdg_path() {
+        let job = crate::platform::ForegroundJob {
+            process_group_id: 100,
+            processes: vec![foreground_process(
+                100,
+                "2.2.0",
+                &["/home/user/.local/share/claude/versions/2.2.0"],
+            )],
+        };
+
+        assert_eq!(
+            identify_agent_in_job(&job),
+            Some((Agent::Claude, "claude".to_string()))
+        );
+    }
+
+    #[test]
+    fn identify_agent_in_job_ignores_unrelated_versions_directory() {
+        let job = crate::platform::ForegroundJob {
+            process_group_id: 200,
+            processes: vec![foreground_process(
+                200,
+                "1.0.0",
+                &["/home/user/.local/share/other-tool/versions/1.0.0"],
+            )],
+        };
+
+        assert_eq!(identify_agent_in_job(&job), None);
     }
 }
